@@ -1,0 +1,243 @@
+% !Rnw root = Main.Rnw
+
+<<declare, echo = FALSE>>=
+## Scaling the data
+y <- as.matrix(wine[, "quality"])
+colnames(y) <- 'quality'
+X <- as.matrix(wine[, 1:11], ncol = 11)
+colnames(X) <- names(wine)[1:11]
+X <- scale(X) ## Scaling the covariates
+test <- wine$test ## Declare Test or Train observations
+## Make Model Equation Part ------------
+get.eq.part.1 <- paste(paste('\\beta', 1:3, sep = '_'), 
+                       paste('\\texttt{', names(wine)[1:3], '}', sep = ''), 
+                       collapse = '+')
+get.eq.part.2 <- paste(paste('\\beta', 4:6, sep = '_'), 
+                       paste('\\texttt{', names(wine)[4:6], '}', sep = ''), 
+                       collapse = '+')
+get.eq.part.3 <- paste(paste('\\beta', 7:9, sep = '_'), 
+                       paste('\\texttt{', names(wine)[7:9], '}', sep = ''), 
+                       collapse = '+')
+get.eq.part.4 <- paste(paste('\\beta', 9:11, sep = '_'), 
+                       paste('\\texttt{', names(wine)[9:11], '}', sep = ''), 
+                       collapse = '+')
+## -----------
+@
+\begin{enumerate}[label=(\alph*)]
+\item{ % Question 1(a) ---------------------------------------------------------
+A statistical model in matrix form can be written as,
+\begin{equation}
+\mathbf{y} = \mathbf{X}\boldsymbol{\beta} + \boldsymbol{\epsilon}
+\label{eq:generalModel}
+\end{equation}
+The parameter $\mathbf{B}$ in equation-\ref{eq:generalModel} can estimated using OLS as,
+\begin{equation}
+\boldsymbol{\hat{\beta}} = (\mathbf{X}^T\mathbf{X})^{-1}\mathbf{X}^T\mathbf{y}
+\label{eq:olsEstimate}
+\end{equation}
+The statistical linear regression model in our case with quality as response and 11 different predictor variable can be written as,
+\begin{align}
+\label{eq:wine.lm.model}
+\texttt{quality} =  & \beta_0 + \Sexpr{get.eq.part.1} \\ \nonumber
+                    & + \Sexpr{get.eq.part.2} \\ \nonumber
+                    & + \Sexpr{get.eq.part.3} \\ \nonumber
+                    & + \Sexpr{get.eq.part.4} 
+\end{align}
+The model in equation - \ref{eq:wine.lm.model} is fitted using OLS, the summary output of the fitted model is,
+<<wine.lm, echo=TRUE>>=
+lm.wine.formula <- makeFormula(X, y)
+lm.wine <- lm(lm.wine.formula, data = wine[!test, ])
+summary(lm.wine)
+@
+<<wine.test.lm.pred, echo = FALSE>>=
+### Predict test sample
+pred.wine.test <- predict(lm.wine, newdata = wine[test, ])
+### Expected test error
+wine.lm.test.err <- pracma::rmserr(pred.wine.test, y[test, ])
+wine.lm.train.err <- pracma::rmserr(y[!test,], lm.wine$fitted.values)
+### Covariate with strongest association
+which.var.max.coef.p <- names(coef(lm.wine)[-1][which.max(coef(lm.wine)[-1])])
+which.var.max.coef.n <- names(coef(lm.wine)[-1][which.min(coef(lm.wine)[-1])])
+@
+
+Further, the model is used to predict the test observations and the mean square error for the prediction is found to be \textbf{\Sexpr{round(wine.lm.test.err$mse, 3)}}. In addition, the summary output shows that \textbf{\Sexpr{which.var.max.coef.p}} has maximum positive (\Sexpr{round(max(coef(lm.wine)[-1]), 2)}) association while \textbf{\Sexpr{which.var.max.coef.n}} has maximum negative (\Sexpr{round(min(coef(lm.wine)[-1]), 2)}) association with the quality of the wine.
+}
+\item{ % Question 1(b) ---------------------------------------------------------
+The ridge estimate for equation - \ref{eq:generalModel} is,
+\begin{equation}
+\boldsymbol{\hat{\beta}}_\text{ridge} = (\mathbf{X}^T\mathbf{X} + \lambda\mathbf{I})^{-1}\mathbf{X}^T\mathbf{y}
+\label{eq:ridgeEstimate}
+\end{equation}
+The shrinkage parameter $\lambda$ in equation-\ref{eq:ridgeEstimate} is obtained through cross-validation procedure by minimizing the cross-validated test error. The model in eq-\ref{eq:wine.lm.model} when fitted with ridge regression gives more shrinked coefficients. Although the coefficients are biased, they are closer to their true value. The model was fitted using \texttt{cv.glmnet} function from \texttt{glmnet} (\cite{R-glmnet}) package with \texttt{$\alpha = 0$} to get ridge estimate. The optimum tuning or shrinkage parameter $\lambda$ for the ridge model is obtained from 10-fold cross-validation method.
+<<wine.ridge, echo = TRUE, tidy=FALSE>>=
+rdg.wine <- cv.glmnet(X[!test, ], y[!test, ], alpha = 0, nfolds = 10)
+rdg.wine.test.pred <- predict.cv.glmnet(object = rdg.wine, newx = X[test, ], 
+                                    s = 'lambda.min')
+rdg.wine.train.pred <- predict.cv.glmnet(object = rdg.wine, newx = X[!test, ], 
+                                    s = 'lambda.min')
+@
+<<wine.ridge.err, echo = FALSE>>=
+wine.rdg.test.err <- rmserr(rdg.wine.test.pred, y[test, ])
+wine.rdg.train.err <- rmserr(rdg.wine.train.pred, y[!test, ])
+@
+
+Here, prediction of test observations are made using lambda that has minimum test error. The mean squared test error is \textbf{\Sexpr{round(rmserr(rdg.wine.test.pred, y[test, ])$mse, 3)}} and the coefficients for the ridge model are obtained as,
+<<wine.ridge.coef, echo = TRUE>>=
+coef(rdg.wine)
+@
+Here, the coefficient estimate for density has reduced (shrunk) considerably than linear model. The cross-validated mean squared error against the logarithm with base 10 of the tuning parameter ($\lambda$) values is presented in fig-\ref{fig:rdg.mse.lmc.plot.print}.
+<<rdg.mse.lmc.plot, echo=FALSE>>=
+### Preperation for plot
+rdg.cv.wine.df <- data.frame(
+  log.lmda = log10(rdg.wine$lambda),
+  MSE = rdg.wine$cvm,
+  upper = rdg.wine$cvup,
+  lower = rdg.wine$cvlo
+)
+rdg.cv.range.df <- data.frame(
+  lo = log10(rdg.wine$lambda.min),
+  hi = log10(rdg.wine$lambda.1se)
+)
+
+### The plot log10(lambda) vs MSE
+ridge.mse.lambda.plot <- ggplot(rdg.cv.wine.df, aes(log.lmda, MSE)) + 
+  geom_point(color = 'red') + 
+  geom_errorbar(aes(ymax = upper, ymin = lower)) + 
+  theme_bw() + 
+  labs(x = 'Log10(lambda)', y = 'Mean-squared Error') +
+  geom_vline(data = rdg.cv.range.df, aes(xintercept = c(lo, hi)),
+             color = 'blue',
+             linetype = 2, size = 1)
+@
+<<rdg.mse.lmc.plot.print, echo=FALSE, fig.width='0.8\textwidth', fig.height=4, fig.cap='Cross-validated mean squared error against the logarithm with base 10 of the tuning parameter $\\lambda$ values for Ridge Regression Model', fig.pos='H'>>=
+print(ridge.mse.lambda.plot)
+@
+
+The optimum value of the tuning parameter ($\lambda$) is \textbf{\Sexpr{round(rdg.wine$lambda.min, 3)}} with minimum mean cross-validated error (\Sexpr{round(min(rdg.wine$cvm), 3)}).
+}
+\item{ % Quesiton 1(c) ---------------------------------------------------------
+The same model in eq-\ref{eq:wine.lm.model} is fitted using lasso model. The coefficient estimates for lasso regression can be written as (\cite{trevor2009elements}),
+\begin{equation}
+\hat{\boldsymbol{\beta}}_\text{lasso} = \underset{\boldsymbol{\beta}}{\text{argmin}} (\mathbf{y} - \mathbf{X}\boldsymbol{\beta})^T(\mathbf{y} - \mathbf{X}\boldsymbol{\beta}) \ni \sum_{i = 1}^p = |\boldsymbol{\beta}_j| \le t
+\end{equation}
+
+As lasso model not only shrinks the coefficients, but also can select variable setting their coefficients to zero, it also constitute variable selection properties like subset method. The model was fitted using \texttt{cv.glmnet} function from \texttt{glmnet} (\cite{R-glmnet}) package with \texttt{$\alpha = 1$}. The optimum tuning or shrinkage parameter for lasso is obtained from 10-fold cross-validation method.
+<<wine.lso, echo = TRUE, tidy=FALSE>>=
+lso.wine <- cv.glmnet(X[!test, ], y[!test, ], alpha = 1, nfolds = 10)
+lso.wine.test.pred <- predict.cv.glmnet(object = lso.wine, newx = X[test, ], 
+                                    s = 'lambda.min')
+lso.wine.train.pred <- predict.cv.glmnet(object = lso.wine, newx = X[!test, ], 
+                                    s = 'lambda.min')
+@
+<<wine.lasso.err, echo = FALSE>>=
+wine.lso.test.err <- rmserr(lso.wine.test.pred, y[test, ])
+wine.lso.train.err <- rmserr(lso.wine.train.pred, y[!test, ])
+@
+The prediction of test observation was made using lambda corresponding to minimum test error. The mean squared test error of \textbf{\Sexpr{round(rmserr(lso.wine.test.pred, y[test, ])$mse, 3)}} and the coefficients for the lasoo model are obtained as,
+<<wine.lso.coef, echo = TRUE>>=
+coef(lso.wine)
+@
+Thus the coefficient estimates shows that only \texttt{\Sexpr{rownames(coef(lso.wine))[as.matrix(coef(lso.wine)) != 0][-1]}} are sufficient for the prediction with error discussed above. The cross-validated mean squared error against the logarithm with base 10 of the tuning parameter ($\lambda$) values is presented in fig-\ref{fig:lso.mse.lmc.plot.print}.
+<<lso.mse.lmc.plot, echo=FALSE>>=
+### Preperation for plot
+lso.cv.wine.df <- data.frame(
+  log.lmda = log10(lso.wine$lambda),
+  MSE = lso.wine$cvm,
+  upper = lso.wine$cvup,
+  lower = lso.wine$cvlo
+)
+lso.cv.range.df <- data.frame(
+  lo = log10(lso.wine$lambda.min),
+  hi = log10(lso.wine$lambda.1se)
+)
+
+### The plot log10(lambda) vs MSE
+lso.mse.lambda.plot <- ggplot(lso.cv.wine.df, aes(log.lmda, MSE)) + 
+  geom_point(color = 'red') + 
+  geom_errorbar(aes(ymax = upper, ymin = lower)) + 
+  theme_bw() + 
+  labs(x = 'Log10(lambda)', y = 'Mean-squared Error') +
+  geom_vline(data = lso.cv.range.df, aes(xintercept = c(lo, hi)),
+             color = 'blue',
+             linetype = 2, size = 1)
+@
+<<lso.mse.lmc.plot.print, echo=FALSE, fig.width='0.8\textwidth', fig.height=4, fig.cap='Cross-validated mean squared error against the logarithm with base 10 of the tuning parameter $\\lambda$ values for Lasso Regression Model', fig.pos='H'>>=
+print(lso.mse.lambda.plot)
+@
+
+The optimum value of the tuning parameter ($\lambda$) is \textbf{\Sexpr{round(lso.wine$lambda.min, 3)}} with minimum mean cross-validated error (\Sexpr{round(min(lso.wine$cvm), 3)}).
+}
+\item{ % Question 1(d) ---------------------------------------------------------
+<<model.compare, echo=FALSE>>=
+test.err.dt <- data.table(melt(
+  list(linear = wine.lm.test.err, 
+       ridge = wine.rdg.test.err, 
+       lasso = wine.lso.test.err)
+))
+setnames(test.err.dt, names(test.err.dt), c('TestError', 'ErrorType', 'Model'))
+setkeyv(test.err.dt, c('Model', 'ErrorType'))
+train.err.dt <- data.table(melt(
+  list(linear = wine.lm.train.err, 
+       ridge = wine.rdg.train.err, 
+       lasso = wine.lso.train.err)
+))
+setnames(train.err.dt, names(train.err.dt), c('TrainError', 'ErrorType', 'Model'))
+setkeyv(train.err.dt, c('Model', 'ErrorType'))
+
+err.dt <- melt(test.err.dt[train.err.dt], 2:3, 
+               variable.name = 'Which.Error', 
+               value.name = 'Error')
+
+mdl.comp <- ggplot(dplyr::filter(melt(list(linear = wine.lm.test.err, 
+                                      ridge = wine.rdg.test.err, 
+                                      lasso = wine.lso.test.err)), 
+                                 L2 != 'nmse'), 
+              aes(L2, value)) + 
+  geom_line(aes(group = L1, color = L1)) + 
+  geom_point(shape = 21, fill = 'gray') + 
+  theme_bw() + 
+  theme(legend.position = c(0.6, 0.15), 
+        legend.title = element_blank(),
+        legend.direction = 'horizontal',
+        axis.title = element_blank(),
+        legend.background = element_blank()) +
+  geom_rug(side = 'l', aes(color = L1)) +
+    annotate(geom = 'rect', xmin = 2.9, xmax = 3.1, 
+             ymin = 0.53, ymax = 0.62, 
+             alpha = 0, color = 'black')
+msedf <- test.err.dt[ErrorType == 'mse']
+mdl.comp.mse <- ggplot(msedf, aes(Model, TestError, color = Model)) + 
+    geom_violin(size = 5) + theme_bw() + 
+    theme(legend.position = 'none',
+          axis.title = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank()) + 
+    scale_y_continuous(limits = c(0.55, 0.59)) +
+    labs(y = 'Mean Squared Error (MSE)') + 
+    geom_rug(sides = 'l') +
+    geom_text(aes(label = round(TestError, 3)), 
+              vjust = -1, color = 'black', size = 4)
+@
+<<model.compare.print, echo = FALSE, fig.width='\\textwidth', fig.height=2.7, fig.cap='Comparison of Linear, Ridge and Lasso model with respect to various error of test prediction with MSE shown in right side', fig.pos='H'>>=
+gridExtra::grid.arrange(mdl.comp, mdl.comp.mse, ncol = 2, widths = c(7/10, 3/10))
+@
+
+The plot in figure-\ref{fig:model.compare.print} shows that Lasso regression model has the least error among others. The error present in the figure-\ref{fig:model.compare.print} are as follows which are obtained using \texttt{rmserr} function from \texttt{pracma} package of R.
+\begin{table}[H]
+\centering
+\begin{tabular}{rlc} \vspace{5mm}
+\texttt{mae}	& Mean Absolute Error & 
+$\displaystyle \frac{1}{n}\sum{\abs{y - \hat{y}}} $ \\ \vspace{5mm}
+\texttt{mse}	& Mean Squared Error & 
+$\displaystyle \frac{1}{n}\sum{(y - \hat{y})^2} $ \\ \vspace{5mm}
+\texttt{rmse} & 	Root Mean Squared Error & 
+$\displaystyle \sqrt{\frac{1}{n}\sum{(y - \hat{y})^2}} $ \\ \vspace{5mm}
+\texttt{lmse} &	Normalized Mean Squared Error & 
+$\displaystyle \frac{1}{n}\sum{\abs{\frac{y - \hat{y}}{y}}} $ \\ \vspace{5mm}
+\texttt{rstd} &	relative Standard Deviation & 
+$\displaystyle \frac{1}{\bar{y}}\sqrt{\frac{1}{n}\sum{(y - \hat{y})^2}} $
+\end{tabular}
+\end{table}
+In the model the two covariates \texttt{\Sexpr{rownames(coef(lso.wine))[as.matrix(coef(lso.wine)) != 0][-1]}} are selected, so, I would recommend the wine seler those two variables since they are highly responsible for the variation in the quality of different wines.
+}
+\end{enumerate}

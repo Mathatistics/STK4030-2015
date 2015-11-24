@@ -1,0 +1,272 @@
+% !Rnw root = Main.Rnw
+
+\begin{enumerate}[label = (\alph*)]
+<<attr.table, echo=FALSE>>=
+## Using DataTable
+faces.dt <- data.table(faces)
+## Create Sex Logical Variable -------------------------------------------------
+Male <- rep(c(TRUE, FALSE), each = 100)
+shoulder <- as.logical(shoulder)
+attr.dt <- data.table(
+  Gender = factor(Male, 
+                  levels = c('TRUE', 'FALSE'), 
+                  labels = c('Male', 'Female')),
+  Shoulder = factor(shoulder, 
+                  levels = c('TRUE', 'FALSE'), 
+                  labels = c('With Shoulder', 
+                             'Without Shoulder'))
+  )
+## Factor Combining to create new one
+invisible(attr.dt[, Gender.Shoulder := dae::fac.combine(list(
+  attr.dt[, Gender], attr.dt[, Shoulder]), combine.levels = T)
+  ])
+@
+
+\item{ % Question 3(a) ---------------------------------------------------------
+The average of all portraits for each gender is plotted in figure-\ref{fig:avg.face.img}. The average portraits differ for male and female. Although the average portraits has not given some discrete image of a person, one can easily differentiate the difference between male portrait and female portrait. In the average portraits each pixel is the average value intensity at the same pixel of all 100 portraits. The most dark and most light part such as hair and light background or highlighted parts can be easily distinguished.
+
+<<avg.face.img, echo=FALSE, fig.height=4.3, fig.width=8.2, fig.cap='Average (Mean) of portraits for Male and Female', fig.pos='H'>>=
+## Plot average faces
+avgFaces <- faces.dt[, list(AvgMale = rowMeans(.SD[, Male, with = F]),
+                         AvgFemale = rowMeans(.SD[, !Male, with = F]))]
+getFaced(as.matrix(avgFaces), n.faces = 1:2, facet.ncol = 2)
+@
+}
+\item{ % Question 3(b) ---------------------------------------------------------
+From the \texttt{faces} matrix, principal component analysis (PCA) is performed. From the first three eigenvectors, eigen faces in fig-\ref{fig:pca.eigenfaces} are obtained. In the eigen faces, the first one constitute most of the variation present in each pixel in all 200 images. The second one contains those variation which are left out by the first principle components which is always less than the first one. The similar is the case of third one. Here, each eigen faces are orthogonal to others.
+<<face.pca, echo=TRUE>>=
+pc.a <- prcomp(t(faces))
+@
+<<face.pca.output, echo = FALSE>>=
+pc.score <- data.table(pc.a$x)
+pc.rotate <- data.table(pc.a$rotation)
+@
+
+PCA shows that around \Sexpr{max(which(summary(pc.a)$importance[3,] <= .80))} components are need to capture at least 80\% of the variation present in the portraits.
+<<pca.eigenfaces, echo=FALSE, fig.height=2.8, fig.cap='Eigen faces obtained from first three principal component for all 200 faces including both male and female', fig.pos = 'H'>>=
+getFaced(as.matrix(pc.rotate), n.faces = 1:3, facet.ncol = 3)
+@
+}
+\item{ % Question 3(c) ---------------------------------------------------------
+<<Scoreplot, echo=FALSE, fig.cap='Principal components plots (Score plots) obtained from pca analysis colored according to Gender and Shoulder being present or not', fig.pos='H', fig.height=6.5>>=
+listGrid <- expand.grid(list(c(1,2), c(1,3)), c('Gender', 'Shoulder'))
+score.plt <- mlply(listGrid, function(Var1, Var2){
+  Var1 <- unlist(Var1); Var2 <- as.character(Var2)
+  getScored(pc.score, ncomp = 1:3, 
+            which = Var1, 
+            attr.df = attr.dt, 
+            col.var = Var2)
+})
+getGrided(score.plt)
+@
+
+The plot in figure-\ref{fig:Scoreplot} clearly shows the distinction between male-female and person with shoulder and without shoulder. The plots in first row, i.e. PC1 against PC2 and PC3 shows that with some error, PC1 able to distinguish male and female. In the similar way PC1 also has classified person with shoulder and without shoulder with slightly more error than in the case of gender classification. These are only the first and second principle components which has captured \Sexpr{paste(paste(round(explvar(pc.a)[1:2], 2), "\\%", sep = ''), sep = ',')} variation respectively presented in the portraits. With consideration of more components the classification can be better.
+
+}
+\item{ % Question 3(d) ---------------------------------------------------------
+Since the plot in figure-\ref{fig:Scoreplot} shows some classification of gender and shoulder being present or not, its desirable to perform some regression. The Gender variable is created as,
+<<create.response, echo=FALSE>>=
+## Creating Gender Response -------
+Gender <- ifelse(Male, -1, 1)
+Shoulder <- ifelse(shoulder, -1, 1)
+Gender.Shoulder <- attr.dt[, as.numeric(Gender.Shoulder)]
+@
+\begin{equation}
+y_i = 
+\begin{cases}
+-1, & \text{if }G_i = \text{male} \\
+1, & \text{if }G_i = \text{female}
+\end{cases}
+\end{equation}
+A principal component regression (PCR) with $y_i$ as responses is performed. The component is selected with leave-one-out cross-validation technique.
+<<faces.model.fitting, echo = FALSE>>=
+if (!('pc.r' %in% ls()) | !('pls.r' %in% ls()))
+  pls.options(parallel = makeCluster(6, type = "PSOCK"))
+if (!('pc.r' %in% ls())) {
+  pc.r <- pcr(Gender ~ t(faces), validation = 'LOO')
+  save(pc.r, file = 'Exports/pcr.Rdata')
+}
+if (!('pls.r') %in% ls()) {
+  pls.r <- plsr(Gender ~ t(faces), validation = 'LOO')
+  save(pls.r, file = 'Exports/pls.Rdata')
+}
+if (!('pc.r' %in% ls()) | !('pls.r' %in% ls()))
+  stopCluster(pls.options()$parallel)
+@
+<<faces.msep.pcr, echo = FALSE>>=
+pcr.msep <- adply(MSEP(pc.r)$val, 3)[-1, ]
+pcr.msep[, 1] <- as.numeric(pcr.msep[, 1]) - 1
+
+pcr.min.comp <- which.min(pcr.msep$adjCV)
+@
+The number of principle components against root mean square error plotted in fig-\ref{fig:faces.msep.pcr.plot} shows that $m = \Sexpr{pcr.min.comp}$ components is needed to attain minimum error.
+<<faces.msep.pcr.plot, echo = FALSE, fig.height=3.5, fig.cap='Number of principal component against Root Mean Square Error of Prediction plot for Principal Component Regression. The dashed line shows the number of component needed for minimum error', fig.pos='H'>>=
+plotRMSEP(MSEP(pc.r))
+@
+A prediction is made with \Sexpr{pcr.min.comp} components and the following classification rule is applied.
+\begin{equation}
+\label{eq:faces.clsf.rule}
+\hat{y}_i =
+\begin{cases}
+\text{Female} & \text{if }\hat{f}(x_i) > 0 \\
+\text{Male} & \text{if }\hat{f}(x_i)  \le 0
+\end{cases}
+\end{equation}
+A confusion matrix is created and plotted as in figure-\ref{fig:pcr.conf.plot}
+<<pcr.conf.plot, echo=FALSE, fig.cap='Confusion Plot for PCR classification', fig.height=2, fig.pos = 'H'>>=
+getClassified(pc.r$fitted.values[, , pcr.min.comp], Gender)$conf.plot
+@
+The model has given \textbf{\Sexpr{getClassified(pc.r$fitted.values[, , pcr.min.comp], Gender)$error.rate}} as misclassification rate.
+}
+\item{ % Question 3(e) ---------------------------------------------------------
+<<faces.msep.pls, echo = FALSE>>=
+pls.msep <- adply(MSEP(pls.r)$val, 3)[-1, ]
+pls.msep[, 1] <- as.numeric(pls.msep[, 1]) - 1
+
+pls.min.comp <- which.min(pls.msep$adjCV)
+@
+The same classification is once more performed using partial least square (PLS) regression. With leave-one-out cross-validation methods is used to select the number of component required for minimum prediction error. The plot of number of principle component against root mean square error in fig-\ref{fig:faces.msep.pls.plot} shows that $m = \Sexpr{pls.min.comp}$ components is needed for minimum prediction error. The model has given \textbf{\Sexpr{getClassified(pls.r$fitted.values[, , pls.min.comp], Gender)$error.rate}} misclassification rate.
+<<faces.msep.pls.plot, echo = FALSE, fig.height=3.5, fig.cap='Number of principal component against Root Mean Square Error of Prediction plot for Partial Least Squre regression. The dashed line shows the number of component needed for minimum error', fig.pos='H'>>=
+plotRMSEP(MSEP(pls.r))
+@
+A prediction made with \Sexpr{pls.min.comp} components and applying classification rule in equation-\ref{eq:faces.clsf.rule} gives a confusion matrix which is plotted in figure-\ref{fig:pls.conf.plot}.
+<<pls.conf.plot, echo=FALSE, fig.cap='Confusion Plot for PLS classification', fig.height=2, fig.pos = 'H'>>=
+getClassified(pls.r$fitted.values[, , pls.min.comp], Gender)$conf.plot
+@
+
+Here, the number of component needed for PLS is much less than that of PCR. Since, PCR accumulate the variation present on predictor variables on its initial principal components while PLS also tries to maximize the covariance between predictor and response. Since PLS being concentrate on classifying y rather than only capturing variation within response, it has used few principle components to do so in contrast to that of PCR.
+}
+\item{ % Question 3(f) ---------------------------------------------------------
+Since the principal components are the linear combination of all the variables, on considering five principal components we can capture \Sexpr{round(summary(pc.a)$imp[3, 5]*100, 2)}\% of variation present on faces dataset. These five principle component are taken into quadratic discriminant analysis (QDA) setup to create a classifier to classify gender as response variable.
+<<qdaSetup, echo = FALSE>>=
+## Quadratic Decision Analysis
+pc.model.mat <- data.frame(pc.score, attr.dt)
+qda.md.name <- c('Gender', 'Shoulder', 'Gender.Shoulder')
+qda.fit <- llply(qda.md.name, function(x){
+  qda(resp ~ ., data = data.frame(resp = eval(parse(text = x)), 
+                                  pc.score[, 1:5, with = F]))
+})
+names(qda.fit) <- qda.md.name
+@
+<<qdaModel, echo = FALSE>>=
+qda.score.plot <- mlply(listGrid, function(Var1, Var2) {
+    Var1 <- unlist(Var1); Var2 <- as.character(Var2)
+    if (Var2 == 'Gender')
+      qdb <- getDB(pc.score, grid.size = 25, 
+                   da.fit = qda.fit$Gender, n.comp = Var1)
+    if (Var2 == 'Shoulder')
+      qdb <- getDB(pc.score, grid.size = 25, 
+                   da.fit = qda.fit$Shoulder, n.comp = Var1)
+    plt <- getScored(pc.score, ncomp = 1:3, 
+                     which = Var1, 
+                     attr.df = attr.dt, 
+                     col.var = Var2) 
+    plt <- plt + geom_contour(data = qdb, 
+                              aes_string(paste('PC', Var1, sep = ''), z = 'z'), 
+                              bins = 1)
+    return(plt)
+  })
+cf.df.qda.gender <- table(predict(qda.fit$Gender)$class, Gender)
+msc.rate.qda <- 1 - sum(diag(cf.df.qda.gender))/sum(cf.df.qda.gender)
+@
+Here the QDA model has classified the gender with \Sexpr{msc.rate.qda} misclassification rate. The classification is shown in figure - \ref{fig:qdaPlotGenderPrint} and figure - \ref{fig:qdaPlotShoulderPrint} with the decision boundary obtained from QDA. The figure present the same plot as in figure-\ref{fig:Scoreplot} but with the decision boundary obtained from the QDA analysis.
+<<qdaPlotGenderPrint, echo = FALSE, fig.cap='Classification of Gender from the \\texttt{faces} data. The blue line is the decision boundry obtained from QDA.', fig.pos = 'H', fig.height=4>>=
+qda.score.plot$ncol <- 2
+do.call(grid_arrange_shared_legend, qda.score.plot[c(1:2, 5)])
+@
+<<qdaPlotShoulderPrint, echo = FALSE, fig.cap='Classification of a person with shoulder and without shoulder from the \\texttt{faces} data. The blue line is the decision boundry obtained from QDA.', fig.pos = 'H', fig.height=4>>=
+do.call(grid_arrange_shared_legend, qda.score.plot[3:5])
+@
+}
+\item{ % Question 3(g)
+Further, both gender and shoulder categories are merged to create a category with 4 levels two for male with shoulder and without shoulder and same for female. The category is used as response for a new QDA setup with 5 principal components as predictors. The decision boundary is created for this situation where the boundaries has separated these 4 levels of response (figure - \ref{fig:modifiedQDAplt}).
+<<modifiedQDA, echo = FALSE>>=
+## Question 3(g) ------------------------
+qda.gs.plot <- llply(list(c(1,2), c(1,3)), function(x){
+  GS.db <- getDB(pc.score, grid.size = 25, da.fit = qda.fit$Gender.Shoulder, 
+                 n.comp = x)
+  plt <- getScored(scores(pc.a), ncomp = 1:3, 
+                   which = x, 
+                   attr.df = attr.dt, 
+                   col.var = 'Gender.Shoulder')
+  plt <- plt + geom_contour(data = GS.db, aes_string(names(GS.db)[1:2], z = 'z'),
+                            lineend = 'round', linejoin = 'round', linetype = 1,
+                            bins = 3)
+  return(plt)
+})
+qda.gs.plot$ncol <- 2
+
+## Classifications
+qda.gs.hat <- predict(qda.fit$Gender.Shoulder)$class
+qda.gs.hat <- factor(qda.gs.hat, levels = 1:4, 
+                     labels = levels(attr.dt$Gender.Shoulder))
+cf.gs.tbl <- table(attr.dt$Gender.Shoulder, qda.gs.hat)
+error.rate <- 1 - sum(diag(cf.gs.tbl)) / sum(cf.gs.tbl)
+
+attr.plus <- data.frame(attr.dt, Gender.Shoulder.Fitted = qda.gs.hat)
+
+## Merging within Gender
+qda.gender.fit2 <- factor(ifelse(grepl('Male', qda.gs.hat), 'Male', 'Female'), 
+                          levels = c('Male', 'Female'))
+cf.qda.gender.tbl <- table(qda.gender.fit2, attr.dt$Gender)
+msc.rate.qda2 <- 1 - sum(diag(cf.qda.gender.tbl)) / sum(cf.qda.gender.tbl)
+@
+<<modifiedQDAplt, echo = FALSE, fig.height=4, fig.cap='Decision Boundry for QDA on merged factor of gender and presence or absence of shoulder', fig.pos='H'>>=
+do.call(grid_arrange_shared_legend, qda.gs.plot)
+@
+Further the prediction obtained from this model is merged for the groups with shoulder and without shoulder within each gender. The classification obtained for gender in this situation gives \Sexpr{msc.rate.qda2} as misclassification rate. This is less than the misclassification made from considering only the gender variable. This can also be visualized from the score plot as in figure - \ref{fig:modifiedQDAplt2} colored accordingly for this classification.
+<<modifiedQDA2, echo = FALSE, results='hide'>>=
+qda.gs.plot2 <- llply(list(c(1,2), c(1,3)), function(x){
+    plt <- getScored(scores(pc.a), ncomp = 1:3, 
+                     which = x, 
+                     attr.df = data.table(Gender = qda.gender.fit2), 
+                     col.var = 'Gender')
+    return(plt)
+})
+qda.gs.plot2$ncol <- 2
+@
+<<modifiedQDAplt2, echo = FALSE, fig.height=3.5, fig.cap='Decision Boundry for QDA on merged factor of persion having shoulder or not within gender variable as if it was classification for just gender.', fig.pos = 'H'>>=
+do.call(grid.arrange, qda.gs.plot2)
+@
+}
+\item{ % Question 3(h)
+Regularized LDA is implemented on the full dataset with gender as response variable. Since the covariance matrix is regularized to solve the dimensional problem, regularized LDA can deal with large matrices where number of variables is larger than the observations. In a regularized LDA the covariance matrix is regularized as,
+
+\begin{equation}
+\boldsymbol{\Sigma} = (1 - \lambda) \boldsymbol{\Sigma} + \lambda \mathbf{I} 
+\end{equation}
+
+<<rda, echo = FALSE>>=
+if (!('rda.fit' %in% ls())) {
+  rda.fit <- rda(resp ~ ., 
+                 data = data.frame(resp = Gender, 
+                                   pc.score[, 1:50, with = F]),
+                 regularization = c(lambda = 0, gamma = 'gamma'),
+                 crossval = TRUE, 
+                 fold = nrow(pc.score))
+  save(rda.fit, file = 'Exports/rda.Rdata')
+}
+@
+
+Due to high dimensional complexity, the full dataset could not be run in this setup however, only talking the 50 principal components, the \texttt{rda} function from \texttt{klaR} package (\cite{R-klaR}) is used for regularized LDA. The model results in \Sexpr{rda.fit$error.rate[1]} as apparent error rate and \Sexpr{rda.fit$error.rate[2]} as cross-validated error rate which is much less than that obtained from un-regularized QDA. The decision boundary for this setup is plotted in figure - \ref{fig:rdaPlotPrint}.
+<<rdaPlot, echo = FALSE>>=
+rda.gs.plot <- llply(list(c(1,2), c(1,3)), function(x){
+    GS.db <- getDB(pc.score, grid.size = 50, da.fit = rda.fit, 
+                   n.comp = x)
+    plt <- getScored(scores(pc.a), ncomp = 1:3, 
+                     which = x, 
+                     attr.df = attr.dt, 
+                     col.var = 'Gender')
+    plt <- plt + geom_contour(data = GS.db, aes_string(names(GS.db)[1:2], z = 'z'),
+                              lineend = 'round', linejoin = 'round', linetype = 1,
+                              bins = 1)
+    return(plt)
+})
+rda.gs.plot$ncol <- 2
+@
+
+<<rdaPlotPrint, echo=FALSE, fig.cap='Classification of gender with decision boundry from Regularized Discreminant Analysis setup for scores of PC1 plotted against PC2 and PC3', fig.height=3.5, fig.pos='H'>>=
+do.call(grid_arrange_shared_legend, rda.gs.plot)
+@
+}
+\end{enumerate}
